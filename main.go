@@ -68,27 +68,38 @@ Dietary restrictions: %s
 Return the answer **strictly** as valid JSON matching this exact schema — no extra text, no markdown, no comments:
 
 {
-  "title": string,
-  "description": string,
-  "prepTime": string,      // e.g. "15 minutes"
-  "cookTime": string,      // e.g. "30 minutes"
-  "servings": integer,
-  "ingredients": string[],
-  "instructions": string[],
-  "tips": string[]         // optional
+  "title": "Recipe Title",
+  "description": "Short description",
+  "prepTime": "15 minutes",
+  "cookTime": "30 minutes",
+  "servings": 4,
+  "ingredients": ["item 1", "item 2"],
+  "instructions": ["step 1", "step 2"],
+  "tips": ["optional tip 1"]
 }
 
 Be concise, accurate and creative.`, input.Ingredient, dietaryRestrictions)
 
-		// Generate structured recipe data
-		recipe, _, err := genkit.GenerateData[Recipe](ctx, g,
-			ai.WithPrompt(prompt),
-			// Optional: force stronger JSON adherence (works better on some models)
-			// ai.WithTemperature(0.1),
-			ai.WithConfig(map[string]any{"response_format": map[string]string{"type": "json_object"}}),
-		)
+		// Generate structured recipe data with retries
+		var recipe *Recipe
+		var err error
+		maxRetries := 3
+
+		for i := 0; i < maxRetries; i++ {
+			recipe, _, err = genkit.GenerateData[Recipe](ctx, g,
+				ai.WithPrompt(prompt),
+				// Optional: force stronger JSON adherence (works better on some models)
+				// ai.WithTemperature(0.1),
+				ai.WithConfig(map[string]any{"response_format": map[string]string{"type": "json_object"}}),
+			)
+			if err == nil {
+				break
+			}
+			log.Printf("Attempt %d failed: %v. Retrying...", i+1, err)
+		}
+
 		if err != nil {
-			return nil, fmt.Errorf("failed to generate recipe: %w", err)
+			return nil, fmt.Errorf("failed to generate recipe after %d attempts: %w", maxRetries, err)
 		}
 
 		return recipe, nil
