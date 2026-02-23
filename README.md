@@ -35,6 +35,30 @@ Clone the repository and install dependencies:
 go mod download
 ```
 
+## Configuration
+
+You can configure the LLM settings using environment variables, a `.env` file, or command-line parameters. Command-line parameters take the highest precedence, followed by environment variables/`.env` file, and finally the default values.
+
+### Environment Variables / .env
+
+Create a `.env` file in the root directory (see `.env.example`):
+
+```env
+LLM_PROVIDER=ollama
+LLM_BASE_URL=http://127.0.0.1:11434/v1
+LLM_API_KEY=ollama
+LLM_MODEL=qwen3:0.6b
+PORT=3400
+```
+
+### Command-line Parameters
+
+When running the server, you can pass parameters:
+
+```bash
+./bin/genkit-server -provider openai -base-url https://api.openai.com/v1 -api-key YOUR_API_KEY -model gpt-4o -port 8080
+```
+
 ### Running the Server
 
 You can run the server directly using:

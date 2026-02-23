@@ -19,7 +19,7 @@ build:
 	$(GOBUILD) $(LDFLAGS) -o bin/$(BINARY_NAME) ./cmd/server
 
 run:
-	$(GORUN) ./cmd/server
+	$(GORUN) ./cmd/server $(FLAGS)
 
 clean:
 	$(GOCLEAN)
@@ -29,11 +29,11 @@ test:
 	$(GOTEST) -v ./...
 
 help:
-	@echo "Usage: make [target]"
+	@echo "Usage: make [target] [FLAGS=\"...\"]"
 	@echo ""
 	@echo "Targets:"
 	@echo "  build   Build the compressed binary"
-	@echo "  run     Run the server directly"
+	@echo "  run     Run the server directly (pass flags via FLAGS=\"-provider=...\")"
 	@echo "  clean   Remove build artifacts"
 	@echo "  test    Run tests"
 	@echo "  help    Show this help message"

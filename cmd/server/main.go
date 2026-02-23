@@ -3,28 +3,51 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 
 	"genkit-flow/internal/flows"
 	"genkit-flow/internal/models"
 	"github.com/firebase/genkit/go/genkit"
 	"github.com/firebase/genkit/go/plugins/compat_oai"
 	"github.com/firebase/genkit/go/plugins/server"
+	"github.com/joho/godotenv"
 )
 
 func main() {
-	ctx := context.Background()
-	model := "qwen3:0.6b"
-	llmModel := fmt.Sprintf("%s/%s", "ollama", model)
+	// Load .env file if it exists
+	if err := godotenv.Load(); err != nil {
+		log.Println("No .env file found, relying on environment variables or flags")
+	}
 
-	// Initialize Genkit with the Ollama plugin
+	// Define flags
+	providerFlag := flag.String("provider", getEnv("LLM_PROVIDER", "ollama"), "LLM provider (e.g., ollama, openai)")
+	baseURLFlag := flag.String("base-url", getEnv("LLM_BASE_URL", "http://127.0.0.1:11434/v1"), "LLM base URL")
+	apiKeyFlag := flag.String("api-key", getEnv("LLM_API_KEY", "ollama"), "LLM API key")
+	modelFlag := flag.String("model", getEnv("LLM_MODEL", "qwen3:0.6b"), "LLM model name")
+	portFlag := flag.String("port", getEnv("PORT", "3400"), "Server port")
+	flag.Parse()
+
+	provider := *providerFlag
+	baseURL := *baseURLFlag
+	apiKey := *apiKeyFlag
+	modelName := *modelFlag
+	port := *portFlag
+
+	ctx := context.Background()
+	llmModel := fmt.Sprintf("%s/%s", provider, modelName)
+
+	log.Printf("Initializing Genkit with provider: %s, model: %s, base URL: %s", provider, modelName, baseURL)
+
+	// Initialize Genkit with the OpenAI-compatible plugin
 	g := genkit.Init(ctx,
 		genkit.WithPlugins(&compat_oai.OpenAICompatible{
-			BaseURL:  "http://127.0.0.1:11434/v1",
-			APIKey:   "ollama", // dummy — Ollama ignores it
-			Provider: "ollama",
+			BaseURL:  baseURL,
+			APIKey:   apiKey,
+			Provider: provider,
 		}),
 		genkit.WithDefaultModel(llmModel),
 	)
@@ -51,9 +74,21 @@ func main() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /recipeGeneratorFlow", genkit.Handler(recipeGeneratorFlow))
 
-	log.Println("Starting server on http://localhost:3400")
-	log.Println("Flow available at:  POST http://localhost:3400/recipeGeneratorFlow")
-	log.Println("Open http://localhost:3400/ui for Genkit developer UI")
+	addr := fmt.Sprintf("127.0.0.1:%s", port)
+	log.Printf("Starting server on http://%s", addr)
+	log.Printf("Flow available at:  POST http://%s/recipeGeneratorFlow", addr)
+	log.Printf("Open http://%s/ui for Genkit developer UI", addr)
 
-	log.Fatal(server.Start(ctx, "127.0.0.1:3400", mux))
+	log.Fatal(server.Start(ctx, addr, mux))
+}
+
+// getEnv retrieves the value of the environment variable named by the key.
+// It returns the value, which will be empty if the variable is not present.
+// If a default value is provided, it returns that if the variable is not present.
+func getEnv(key, defaultValue string) string {
+	value := os.Getenv(key)
+	if value == "" {
+		return defaultValue
+	}
+	return value
 }
