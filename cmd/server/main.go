@@ -2,14 +2,12 @@ package main
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
 	"log"
 	"net/http"
 
 	"genkit-flow/internal/config"
 	"genkit-flow/internal/flows"
-	"genkit-flow/internal/models"
+	"genkit-flow/internal/ui"
 	"github.com/firebase/genkit/go/genkit"
 	"github.com/firebase/genkit/go/plugins/compat_oai"
 	"github.com/firebase/genkit/go/plugins/server"
@@ -37,25 +35,11 @@ func main() {
 	// Define recipe generator flow from internal/flows
 	recipeGeneratorFlow := flows.DefineRecipeFlow(g)
 
-	log.Printf("Running quick test with model: %s", llmModel)
-	// Quick test run
-	recipe, err := recipeGeneratorFlow.Run(ctx, &models.RecipeInput{
-		Ingredient:          "avocado",
-		DietaryRestrictions: "vegetarian",
-	})
-	if err != nil {
-		log.Printf("could not generate recipe in test run: %v", err)
-		// We don't log.Fatal here so the server can still start
-	} else {
-		recipeJSON, _ := json.MarshalIndent(recipe, "", "  ")
-		fmt.Println("Sample recipe generated:")
-		fmt.Println(string(recipeJSON))
-	}
-
 	// Start server (Dev UI + flow endpoint)
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/recipeGeneratorFlow", genkit.Handler(recipeGeneratorFlow))
 	mux.HandleFunc("/recipeGeneratorFlow", genkit.Handler(recipeGeneratorFlow))
+	mux.Handle("/", ui.Handler())
 
 	addr := cfg.Addr()
 	log.Printf("Starting server on http://%s", addr)

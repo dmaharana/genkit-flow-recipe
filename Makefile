@@ -11,11 +11,14 @@ GORUN=$(GOCMD) run
 # Build flags
 LDFLAGS=-ldflags="-s -w"
 
-.PHONY: all build clean test run help
+.PHONY: all build build-ui clean test run help
 
 all: build
 
-build:
+build-ui:
+	cd ../genkit-flow-ui && pnpm build --outDir ../genkit-flow/internal/ui/dist
+
+build: build-ui
 	$(GOBUILD) $(LDFLAGS) -o bin/$(BINARY_NAME) ./cmd/server
 
 run:
