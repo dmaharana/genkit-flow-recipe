@@ -51,7 +51,7 @@ func (c *Config) LLMModel() string {
 
 // Addr returns the server address string.
 func (c *Config) Addr() string {
-	return fmt.Sprintf("127.0.0.1:%s", c.Port)
+	return fmt.Sprintf("0.0.0.0:%s", c.Port)
 }
 
 // getEnv retrieves the value of the environment variable named by the key.

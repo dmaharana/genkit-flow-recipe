@@ -2,7 +2,10 @@ module genkit-flow
 
 go 1.25
 
-require github.com/firebase/genkit/go v1.4.0
+require (
+	github.com/firebase/genkit/go v1.4.0
+	github.com/joho/godotenv v1.5.1
+)
 
 require (
 	github.com/bahlo/generic-list-go v0.2.0 // indirect
@@ -14,7 +17,6 @@ require (
 	github.com/google/dotprompt/go v0.0.0-20260219185359-d70752b9dfbb // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/invopop/jsonschema v0.13.0 // indirect
-	github.com/joho/godotenv v1.5.1 // indirect
 	github.com/mailru/easyjson v0.9.1 // indirect
 	github.com/mbleigh/raymond v0.0.0-20250414171441-6b3a58ab9e0a // indirect
 	github.com/openai/openai-go v1.8.2 // indirect

@@ -54,11 +54,12 @@ func main() {
 
 	// Start server (Dev UI + flow endpoint)
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /recipeGeneratorFlow", genkit.Handler(recipeGeneratorFlow))
+	mux.HandleFunc("/api/recipeGeneratorFlow", genkit.Handler(recipeGeneratorFlow))
+	mux.HandleFunc("/recipeGeneratorFlow", genkit.Handler(recipeGeneratorFlow))
 
 	addr := cfg.Addr()
 	log.Printf("Starting server on http://%s", addr)
-	log.Printf("Flow available at:  POST http://%s/recipeGeneratorFlow", addr)
+	log.Printf("Flow available at:  POST http://%s/api/recipeGeneratorFlow", addr)
 	log.Printf("Open http://%s/ui for Genkit developer UI", addr)
 
 	log.Fatal(server.Start(ctx, addr, mux))
