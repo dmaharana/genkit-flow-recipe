@@ -11,11 +11,13 @@ import (
 
 // Config holds the application configuration.
 type Config struct {
-	Provider string
-	BaseURL  string
-	APIKey   string
-	Model    string
-	Port     string
+	Provider       string
+	BaseURL        string
+	APIKey         string
+	Model          string
+	Port           string
+	OTLPEndpoint   string
+	TracingEnabled bool
 }
 
 // Load initializes the configuration from .env file, environment variables, and command-line flags.
@@ -33,6 +35,8 @@ func Load() *Config {
 	apiKeyFlag := flag.String("api-key", getEnv("LLM_API_KEY", "ollama"), "LLM API key")
 	modelFlag := flag.String("model", getEnv("LLM_MODEL", "qwen3:0.6b"), "LLM model name")
 	portFlag := flag.String("port", getEnv("PORT", "3400"), "Server port")
+	otlpEndpointFlag := flag.String("otlp-endpoint", getEnv("OTLP_ENDPOINT", "localhost:4317"), "OTLP collector endpoint (e.g., Jaeger)")
+	tracingEnabledFlag := flag.Bool("tracing", getEnvBool("TRACING_ENABLED", false), "Enable OpenTelemetry tracing")
 	flag.Parse()
 
 	c.Provider = *providerFlag
@@ -40,6 +44,8 @@ func Load() *Config {
 	c.APIKey = *apiKeyFlag
 	c.Model = *modelFlag
 	c.Port = *portFlag
+	c.OTLPEndpoint = *otlpEndpointFlag
+	c.TracingEnabled = *tracingEnabledFlag
 
 	return c
 }
@@ -61,4 +67,13 @@ func getEnv(key, defaultValue string) string {
 		return defaultValue
 	}
 	return value
+}
+
+// getEnvBool retrieves the value of the environment variable as a boolean.
+func getEnvBool(key string, defaultValue bool) bool {
+	value := os.Getenv(key)
+	if value == "" {
+		return defaultValue
+	}
+	return value == "true" || value == "1" || value == "yes"
 }

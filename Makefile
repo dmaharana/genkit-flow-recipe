@@ -16,7 +16,7 @@ LDFLAGS=-ldflags="-s -w"
 all: build
 
 build-ui:
-	cd ../genkit-flow-ui && pnpm build --outDir ../genkit-flow/internal/ui/dist
+	cd ../genkit-flow-ui && pnpm build --emptyOutDir --outDir ../genkit-flow/internal/ui/dist
 
 build: build-ui
 	$(GOBUILD) $(LDFLAGS) -o bin/$(BINARY_NAME) ./cmd/server
