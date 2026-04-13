@@ -4,3 +4,4 @@ bin/*
 internal/ui/dist
 genkit-server
 *.log
+*.db

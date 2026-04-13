@@ -2,12 +2,10 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"log"
 	"net/http"
-	"os"
-	"path/filepath"
-	"sort"
 	"time"
 
 	"genkit-flow/internal/config"
@@ -22,29 +20,39 @@ import (
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
 	"go.opentelemetry.io/otel/exporters/stdout/stdouttrace"
 	"go.opentelemetry.io/otel/sdk/trace"
+
+	_ "modernc.org/sqlite"
 )
 
-// FileTelemetryClient implements tracing.TelemetryClient to save traces to the filesystem.
-type FileTelemetryClient struct {
-	Dir string
+// SQLiteTelemetryClient implements tracing.TelemetryClient to save traces to a SQLite database.
+type SQLiteTelemetryClient struct {
+	db *sql.DB
 }
 
-func (c *FileTelemetryClient) Save(ctx context.Context, data *tracing.Data) error {
+func (c *SQLiteTelemetryClient) Save(ctx context.Context, data *tracing.Data) error {
 	if data == nil || data.TraceID == "" {
+		log.Printf("SQLiteTelemetryClient: received empty or nil trace data")
 		return nil
 	}
-	
-	path := filepath.Join(c.Dir, data.TraceID)
-	// Ensure directory exists
-	os.MkdirAll(c.Dir, 0755)
-	
-	f, err := os.Create(path)
+
+	jsonData, err := json.Marshal(data)
 	if err != nil {
+		log.Printf("SQLiteTelemetryClient: failed to marshal trace %s: %v", data.TraceID, err)
 		return err
 	}
-	defer f.Close()
+
+	_, err = c.db.ExecContext(ctx, `
+		INSERT INTO traces (id, data, created_at) 
+		VALUES (?, ?, ?) 
+		ON CONFLICT(id) DO UPDATE SET data = ?, created_at = ?`,
+		data.TraceID, string(jsonData), time.Now(), string(jsonData), time.Now())
 	
-	return json.NewEncoder(f).Encode(data)
+	if err != nil {
+		log.Printf("SQLiteTelemetryClient: failed to save trace %s to DB: %v", data.TraceID, err)
+	} else {
+		log.Printf("SQLiteTelemetryClient: successfully saved trace %s to DB", data.TraceID)
+	}
+	return err
 }
 
 // MultiSpanExporter implements trace.SpanExporter by forwarding spans to multiple exporters.
@@ -70,14 +78,36 @@ func (m *MultiSpanExporter) Shutdown(ctx context.Context) error {
 	return nil
 }
 
+func initDB() (*sql.DB, error) {
+	db, err := sql.Open("sqlite", "genkit_traces.db")
+	if err != nil {
+		return nil, err
+	}
+
+	// Create table if not exists
+	_, err = db.Exec(`
+		CREATE TABLE IF NOT EXISTS traces (
+			id TEXT PRIMARY KEY,
+			data TEXT,
+			created_at DATETIME
+		)`)
+	if err != nil {
+		return nil, err
+	}
+
+	return db, nil
+}
+
 func main() {
 	// Load configuration
 	cfg := config.Load()
-	
-	// Register file-based telemetry to save traces to .genkit/traces
-	wd, _ := os.Getwd()
-	traceDir := filepath.Join(wd, ".genkit/traces")
-	tracing.WriteTelemetryImmediate(&FileTelemetryClient{Dir: traceDir})
+
+	// Initialize SQLite DB
+	db, err := initDB()
+	if err != nil {
+		log.Fatalf("failed to initialize database: %v", err)
+	}
+	defer db.Close()
 
 	ctx := context.Background()
 	llmModel := cfg.LLMModel()
@@ -138,6 +168,9 @@ func main() {
 		genkit.WithDefaultModel(llmModel),
 	)
 
+	// Register SQLite-based telemetry (DO THIS AFTER genkit.Init)
+	tracing.WriteTelemetryImmediate(&SQLiteTelemetryClient{db: db})
+
 	// Define recipe generator flow from internal/flows
 	recipeGeneratorFlow := flows.DefineRecipeFlow(g)
 
@@ -152,43 +185,24 @@ func main() {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		// Get current working directory for robustness
-		wd, _ := os.Getwd()
-		traceDir := filepath.Join(wd, ".genkit/traces")
-		
-		files, err := os.ReadDir(traceDir)
+
+		rows, err := db.QueryContext(r.Context(), "SELECT id FROM traces ORDER BY created_at DESC")
 		if err != nil {
-			http.Error(w, "Trace directory not found: "+err.Error(), http.StatusInternalServerError)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		
-		type TraceFile struct {
-			Name    string
-			ModTime time.Time
-		}
-		var traceFiles []TraceFile
-		for _, f := range files {
-			if !f.IsDir() {
-				info, err := f.Info()
-				if err == nil {
-					traceFiles = append(traceFiles, TraceFile{
-						Name:    f.Name(),
-						ModTime: info.ModTime(),
-					})
-				}
+		defer rows.Close()
+
+		traces := []string{}
+		for rows.Next() {
+			var id string
+			if err := rows.Scan(&id); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
 			}
+			traces = append(traces, id)
 		}
-		
-		// Sort by ModTime descending
-		sort.Slice(traceFiles, func(i, j int) bool {
-			return traceFiles[i].ModTime.After(traceFiles[j].ModTime)
-		})
-		
-		var traces []string
-		for _, tf := range traceFiles {
-			traces = append(traces, tf.Name)
-		}
-		
+
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(traces)
 	})
@@ -203,13 +217,20 @@ func main() {
 			http.Error(w, "Trace ID is required", http.StatusBadRequest)
 			return
 		}
-		data, err := os.ReadFile(".genkit/traces/" + id)
+
+		var jsonData string
+		err := db.QueryRowContext(r.Context(), "SELECT data FROM traces WHERE id = ?", id).Scan(&jsonData)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusNotFound)
+			if err == sql.ErrNoRows {
+				http.Error(w, "Trace not found", http.StatusNotFound)
+			} else {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+			}
 			return
 		}
+
 		w.Header().Set("Content-Type", "application/json")
-		w.Write(data)
+		w.Write([]byte(jsonData))
 	})
 
 	mux.Handle("/", ui.Handler())
