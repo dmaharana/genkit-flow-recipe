@@ -9,6 +9,8 @@ import (
 	"github.com/firebase/genkit/go/ai"
 	"github.com/firebase/genkit/go/core"
 	"github.com/firebase/genkit/go/genkit"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // DefineRecipeFlow initializes and registers the recipe generator flow.
@@ -41,20 +43,42 @@ Be concise, accurate and creative.`, input.Ingredient, dietaryRestrictions)
 
 		// Generate structured recipe data with retries
 		var recipe *models.Recipe
+		var resp *ai.ModelResponse
 		var err error
 		maxRetries := 3
 
 		for i := 0; i < maxRetries; i++ {
-			recipe, _, err = genkit.GenerateData[models.Recipe](ctx, g,
+			recipe, resp, err = genkit.GenerateData[models.Recipe](ctx, g,
 				ai.WithPrompt(prompt),
 				// Optional: force stronger JSON adherence (works better on some models)
 				// ai.WithTemperature(0.1),
 				ai.WithConfig(map[string]any{"response_format": map[string]string{"type": "json_object"}}),
 			)
 			if err == nil {
+				// Capture token usage in trace span
+				if resp != nil && resp.Usage != nil {
+					span := trace.SpanFromContext(ctx)
+					span.SetAttributes(
+						// Standard Genkit attributes
+						attribute.Int("genkit:metadata:input_tokens", resp.Usage.InputTokens),
+						attribute.Int("genkit:metadata:output_tokens", resp.Usage.OutputTokens),
+						// Standard OTel AI attributes (often used by explorers)
+						attribute.Int("genkit/ai/generate/input/tokens", resp.Usage.InputTokens),
+						attribute.Int("genkit/ai/generate/output/tokens", resp.Usage.OutputTokens),
+						// Prominent attributes for easy discovery
+						attribute.Int("usage.input_tokens", resp.Usage.InputTokens),
+						attribute.Int("usage.output_tokens", resp.Usage.OutputTokens),
+					)
+				}
 				break
 			}
-			log.Printf("Attempt %d failed: %v. Retrying...", i+1, err)
+			
+			// Log more detail on failure to help diagnose provider-specific issues
+			log.Printf("Attempt %d failed: %v", i+1, err)
+			if resp != nil {
+				log.Printf("Raw model response: %s", resp.Text())
+			}
+			log.Printf("Retrying...")
 		}
 
 		if err != nil {

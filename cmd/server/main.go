@@ -18,7 +18,6 @@ import (
 	"github.com/firebase/genkit/go/plugins/server"
 	opentelemetry "github.com/xavidop/genkit-opentelemetry-go"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
-	"go.opentelemetry.io/otel/exporters/stdout/stdouttrace"
 	"go.opentelemetry.io/otel/sdk/trace"
 
 	_ "modernc.org/sqlite"
@@ -35,6 +34,19 @@ func (c *SQLiteTelemetryClient) Save(ctx context.Context, data *tracing.Data) er
 		return nil
 	}
 
+	// Extract tokens from spans for DB storage
+	var inputTokens, outputTokens int
+	for _, span := range data.Spans {
+		if span.Attributes != nil {
+			if it, ok := span.Attributes["genkit:metadata:input_tokens"]; ok {
+				inputTokens = int(toInt64(it))
+			}
+			if ot, ok := span.Attributes["genkit:metadata:output_tokens"]; ok {
+				outputTokens = int(toInt64(ot))
+			}
+		}
+	}
+
 	jsonData, err := json.Marshal(data)
 	if err != nil {
 		log.Printf("SQLiteTelemetryClient: failed to marshal trace %s: %v", data.TraceID, err)
@@ -42,10 +54,11 @@ func (c *SQLiteTelemetryClient) Save(ctx context.Context, data *tracing.Data) er
 	}
 
 	_, err = c.db.ExecContext(ctx, `
-		INSERT INTO traces (id, data, created_at) 
-		VALUES (?, ?, ?) 
-		ON CONFLICT(id) DO UPDATE SET data = ?, created_at = ?`,
-		data.TraceID, string(jsonData), time.Now(), string(jsonData), time.Now())
+		INSERT INTO traces (id, data, input_tokens, output_tokens, created_at) 
+		VALUES (?, ?, ?, ?, ?) 
+		ON CONFLICT(id) DO UPDATE SET data = ?, input_tokens = ?, output_tokens = ?, created_at = ?`,
+		data.TraceID, string(jsonData), inputTokens, outputTokens, time.Now(),
+		string(jsonData), inputTokens, outputTokens, time.Now())
 	
 	if err != nil {
 		log.Printf("SQLiteTelemetryClient: failed to save trace %s to DB: %v", data.TraceID, err)
@@ -53,6 +66,19 @@ func (c *SQLiteTelemetryClient) Save(ctx context.Context, data *tracing.Data) er
 		log.Printf("SQLiteTelemetryClient: successfully saved trace %s to DB", data.TraceID)
 	}
 	return err
+}
+
+func toInt64(v any) int64 {
+	switch i := v.(type) {
+	case int:
+		return int64(i)
+	case int64:
+		return i
+	case float64:
+		return int64(i)
+	default:
+		return 0
+	}
 }
 
 // MultiSpanExporter implements trace.SpanExporter by forwarding spans to multiple exporters.
@@ -89,10 +115,20 @@ func initDB() (*sql.DB, error) {
 		CREATE TABLE IF NOT EXISTS traces (
 			id TEXT PRIMARY KEY,
 			data TEXT,
+			input_tokens INTEGER DEFAULT 0,
+			output_tokens INTEGER DEFAULT 0,
 			created_at DATETIME
 		)`)
 	if err != nil {
 		return nil, err
+	}
+
+	// Check if columns exist (for migration)
+	var count int
+	err = db.QueryRow("SELECT count(*) FROM pragma_table_info('traces') WHERE name='input_tokens'").Scan(&count)
+	if err == nil && count == 0 {
+		_, _ = db.Exec("ALTER TABLE traces ADD COLUMN input_tokens INTEGER DEFAULT 0")
+		_, _ = db.Exec("ALTER TABLE traces ADD COLUMN output_tokens INTEGER DEFAULT 0")
 	}
 
 	return db, nil
@@ -123,7 +159,7 @@ func main() {
 	})
 
 	if cfg.TracingEnabled {
-		log.Printf("Enabling OpenTelemetry tracing with OTLP endpoint: %s and console logs", cfg.OTLPEndpoint)
+		log.Printf("Enabling OpenTelemetry tracing with OTLP endpoint: %s", cfg.OTLPEndpoint)
 
 		// Create OTLP exporter
 		otlpExporter, err := otlptracegrpc.New(ctx,
@@ -134,29 +170,18 @@ func main() {
 			log.Fatalf("failed to create OTLP exporter: %v", err)
 		}
 
-		// Create Console exporter
-		stdoutExporter, err := stdouttrace.New(stdouttrace.WithPrettyPrint())
-		if err != nil {
-			log.Fatalf("failed to create stdout exporter: %v", err)
-		}
-
-		// Combine both exporters
-		multiExporter := &MultiSpanExporter{
-			exporters: []trace.SpanExporter{otlpExporter, stdoutExporter},
-		}
-
 		// Ensure graceful shutdown to flush remaining spans
 		defer func() {
 			shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
-			if err := multiExporter.Shutdown(shutdownCtx); err != nil {
-				log.Printf("Error shutting down OpenTelemetry exporters: %v", err)
+			if err := otlpExporter.Shutdown(shutdownCtx); err != nil {
+				log.Printf("Error shutting down OpenTelemetry exporter: %v", err)
 			}
 		}()
 
 		otelPlugin := opentelemetry.New(opentelemetry.Config{
 			ServiceName:   "genkit-flow-app",
-			TraceExporter: multiExporter,
+			TraceExporter: otlpExporter,
 			ForceExport:   true,
 		})
 		plugins = append(plugins, otelPlugin)
